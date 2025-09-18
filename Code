@@ -1,0 +1,171 @@
+import random as r
+import numpy as np
+import matplotlib.pyplot as plt
+
+P1 = 100
+P0 = 200
+k = 0.01
+dt = 0.01
+Total_time = 15000
+TPB = 70
+TMB = 20
+
+transition_matrix = np.array([
+    [0.95, 0.04, 0.01],
+    [0.05, 0.90, 0.05],
+    [0.01, 0.04, 0.95]
+])
+
+regime_params = {
+    0: {"alpha": 0.005, "sigma": 0.08},
+    1: {"alpha": 0.01,  "sigma": 0.05},
+    2: {"alpha": 0.015, "sigma": 0.03}
+}
+
+current_regime = 1
+regime_history = [current_regime]
+
+def tp(bias):
+    nmc = r.randint(1,100)
+    vol = r.randint(40,150) if nmc <= 5 else r.randint(10,40)
+    buy = 0
+    sell = 0
+    if bias > TPB:
+        buy += vol
+    elif bias < TPB:
+        sell += r.randint(1, max(1, vol // 3))
+    if buy == 0 and sell == 0:
+        buy += r.randint(5, 15)
+    return [buy, sell]
+
+def tn(bias):
+    nmc = r.randint(1,100)
+    vol1 = r.randint(30,100) if nmc <= 10 else r.randint(5,30)
+    buy = 0
+    sell = 0
+    if bias < TMB:
+        sell += vol1
+    elif bias > TMB:
+        buy += r.randint(1, max(1, vol1 // 3))
+    if buy == 0 and sell == 0:
+        sell += r.randint(5, 15)
+    return [buy, sell]
+
+def dr(Bt, St, ALPHA=0.01):
+    return ALPHA * (Bt - St) / (Bt + St) if Bt + St != 0 else 0
+
+def update_anchor(P1, sigma_anchor=1.0):
+    eps = np.random.normal(0, sigma_anchor)
+    return max(P1 + eps, 0.01)
+
+def Pr(drift, P0, P1, dt, k, sigma):
+    P = P0 * (1 + drift*dt + sigma * np.random.normal(0, 1) * np.sqrt(dt)) + k * (P1 - P0) * dt
+    return max(P, 0.01)
+
+anchor_history = [P1]
+price_history = [P0]
+drift_history = []
+buy_history = []
+sell_history = []
+regime_trace = [current_regime]
+
+for i in range(Total_time):
+    step_buys = 0
+    step_sells = 0
+    num_trades_this_step = r.randint(2,10)
+    bias = r.randint(0,100)
+
+    for _ in range(num_trades_this_step):
+        P_random = r.random() * 100
+        T = r.randint(1,100)
+        if T <= P_random:
+            l1 = tn(bias)
+        else:
+            l1 = tp(bias)
+        step_buys += l1[0]
+        step_sells += l1[1]
+
+    if step_buys + step_sells == 0:
+        step_buys += 1
+
+    params = regime_params[current_regime]
+    drift = dr(step_buys, step_sells, ALPHA=params["alpha"])
+    P1 = update_anchor(P1)
+    newP = Pr(drift, P0, P1, dt, k, sigma=params["sigma"])
+
+    price_history.append(newP)
+    drift_history.append(drift)
+    buy_history.append(step_buys)
+    sell_history.append(step_sells)
+    anchor_history.append(P1)
+    regime_trace.append(current_regime)
+    P0 = newP
+
+    current_regime = np.random.choice([0,1,2], p=transition_matrix[current_regime])
+
+avg_drift = np.mean(drift_history)
+avg_buys = np.mean(buy_history)
+avg_sells = np.mean(sell_history)
+price_volatility = np.std(price_history)
+
+print("\n--- Simulation Summary ---")
+print(f"Average drift per step: {avg_drift:.4f}")
+print(f"Average buys per step: {avg_buys:.2f}")
+print(f"Average sells per step: {avg_sells:.2f}")
+print(f"Price volatility (std dev): {price_volatility:.2f}")
+
+plt.figure(figsize=(10,5))
+plt.plot(price_history, label="Price")
+plt.xlabel("Time step")
+plt.ylabel("Price")
+plt.title("Simulated Price Evolution")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(10,5))
+plt.plot(price_history, label="Price")
+plt.plot(anchor_history, label="Anchor Price")
+plt.xlabel("Time step")
+plt.ylabel("Price")
+plt.title("Simulated Price vs Anchor")
+plt.legend()
+plt.show()
+
+# Regime statistics
+regime_durations = []
+current = regime_trace[0]
+length = 1
+for r in regime_trace[1:]:
+    if r == current:
+        length += 1
+    else:
+        regime_durations.append((current, length))
+        current = r
+        length = 1
+regime_durations.append((current, length))
+
+durations = {0: [], 1: [], 2: []}
+for r, l in regime_durations:
+    durations[r].append(l)
+
+vol_by_regime = {0: [], 1: [], 2: []}
+for i in range(1, len(price_history)):
+    r = regime_trace[i]
+    delta = price_history[i] - price_history[i-1]
+    vol_by_regime[r].append(delta)
+
+print("\n--- Regime Statistics ---")
+for r in [0,1,2]:
+    avg_dur = np.mean(durations[r]) if durations[r] else 0
+    vol = np.std(vol_by_regime[r]) if vol_by_regime[r] else 0
+    label = ["Bear", "Neutral", "Bull"][r]
+    print(f"{label} regime: avg duration = {avg_dur:.2f} steps, volatility = {vol:.4f}")
+
+plt.figure(figsize=(10,3))
+plt.plot(regime_trace, label="Regime")
+plt.xlabel("Time step")
+plt.ylabel("Regime")
+plt.title("Regime Switching Trace")
+plt.yticks([0,1,2], ["Bear", "Neutral", "Bull"])
+plt.legend()
+plt.show()
